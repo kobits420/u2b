@@ -217,11 +217,14 @@ class U2BPlayer:
             
             # Configure yt-dlp options for streaming
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best',
+                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best[acodec!=none]',
                 'quiet': True,
                 'no_warnings': True,
                 'extractaudio': False,
                 'outtmpl': '-',
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
             }
             
             # Get the direct URL
@@ -239,22 +242,55 @@ class U2BPlayer:
                 self.play_next_in_queue()
                 return
             
-            # Start playback using ffplay in background thread
-            cmd = ['ffplay'] + config.FFMPEG_AUDIO_OPTIONS + ['-volume', str(self.volume), '-i', video_url]
+            # Use ffplay with better stream handling
+            cmd = [
+                'ffplay',
+                '-nodisp',
+                '-autoexit',
+                '-hide_banner',
+                '-loglevel', 'error',
+                '-nostats',
+                '-volume', str(self.volume),
+                '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+                '-i', video_url
+            ]
             
-            self.current_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Start ffplay process
+            self.current_process = subprocess.Popen(
+                cmd, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.PIPE,
+                text=True
+            )
             self.is_playing = True
             
-            # Start a thread to monitor the process and play next when done
+            # Start a thread to monitor the process
             def monitor_playback():
                 try:
-                    self.current_process.wait()
-                    # Only play next if we're still supposed to be playing (not stopped manually)
-                    if self.is_playing and self.current_process:
+                    # Check if process is valid before monitoring
+                    if not self.current_process:
+                        return
+                    
+                    # Wait for the process to complete naturally
+                    return_code = self.current_process.wait()
+                    
+                    # Get any error output for debugging
+                    stderr_output = self.current_process.stderr.read() if self.current_process and self.current_process.stderr else ""
+                    
+                    # Only play next if we're still supposed to be playing
+                    if self.is_playing and return_code == 0:
                         self.play_next_in_queue()
-                except:
-                    # Process was terminated externally, don't auto-play next
-                    pass
+                    elif return_code != 0:
+                        print(f"{Fore.YELLOW}Track ended unexpectedly (code: {return_code}){Style.RESET_ALL}")
+                        if stderr_output:
+                            print(f"{Fore.YELLOW}Error: {stderr_output.strip()}{Style.RESET_ALL}")
+                        if self.is_playing:
+                            self.play_next_in_queue()
+                            
+                except Exception as e:
+                    if self.is_playing:
+                        print(f"{Fore.YELLOW}Playback interrupted: {e}{Style.RESET_ALL}")
+                        self.play_next_in_queue()
             
             self.player_thread = threading.Thread(target=monitor_playback, daemon=True)
             self.player_thread.start()

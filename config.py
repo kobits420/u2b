@@ -12,7 +12,9 @@ FFMPEG_AUDIO_OPTIONS = [
     '-nodisp',      # No video display for audio-only
     '-autoexit',    # Exit when playback ends
     '-hide_banner', # Hide FFmpeg banner
-    '-loglevel', 'error'  # Only show errors
+    '-loglevel', 'error',  # Only show errors
+    '-nostats',     # Don't show statistics
+    '-sync', 'ext'  # External clock sync for better timing
 ]
 
 FFMPEG_VIDEO_OPTIONS = [
