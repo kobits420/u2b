@@ -30,6 +30,72 @@ class U2BPlayer:
         self.current_track = None
         self.queue_lock = threading.Lock()
         self.player_thread = None
+        self.ffplay_path = self._find_ffplay()
+    
+    def _find_ffplay(self):
+        """Find ffplay executable in PATH or common locations"""
+        import shutil
+        # First try to find it in PATH
+        ffplay_path = shutil.which('ffplay')
+        if ffplay_path:
+            return ffplay_path
+        
+        # Try common Windows locations
+        if sys.platform == 'win32':
+            # Check WinGet installation location
+            local_appdata = os.environ.get('LOCALAPPDATA', '')
+            winget_path = os.path.join(local_appdata, r'Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.0-full_build\bin\ffplay.exe')
+            
+            common_paths = [
+                winget_path,
+                r'C:\ffmpeg\bin\ffplay.exe',
+                r'C:\Program Files\ffmpeg\bin\ffplay.exe',
+                r'C:\Program Files (x86)\ffmpeg\bin\ffplay.exe',
+            ]
+            # Also check for any ffmpeg in WinGet packages
+            if local_appdata:
+                winget_base = os.path.join(local_appdata, r'Microsoft\WinGet\Packages')
+                if os.path.exists(winget_base):
+                    try:
+                        for item in os.listdir(winget_base):
+                            if 'ffmpeg' in item.lower():
+                                item_path = os.path.join(winget_base, item)
+                                if os.path.isdir(item_path):
+                                    # Check for specific version path
+                                    potential_path = os.path.join(item_path, 'ffmpeg-8.0-full_build', 'bin', 'ffplay.exe')
+                                    if os.path.exists(potential_path):
+                                        common_paths.insert(0, potential_path)
+                                    # Also check for other version numbers
+                                    for subdir in os.listdir(item_path):
+                                        subdir_path = os.path.join(item_path, subdir)
+                                        if os.path.isdir(subdir_path) and 'ffmpeg' in subdir.lower() and 'build' in subdir.lower():
+                                            potential_path = os.path.join(subdir_path, 'bin', 'ffplay.exe')
+                                            if os.path.exists(potential_path):
+                                                common_paths.insert(0, potential_path)
+                    except (OSError, PermissionError):
+                        pass  # Skip if we can't access the directory
+            
+            for path in common_paths:
+                if os.path.exists(path):
+                    return path
+        
+        return None
+    
+    def _check_ffplay(self):
+        """Check if ffplay is available"""
+        if not self.ffplay_path:
+            print(f"{Fore.RED}ERROR: ffplay not found!{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}FFmpeg is required to play audio/video.{Style.RESET_ALL}")
+            print(f"\n{Fore.CYAN}To install FFmpeg on Windows:{Style.RESET_ALL}")
+            print("1. Download from: https://www.gyan.dev/ffmpeg/builds/")
+            print("   (or https://ffmpeg.org/download.html)")
+            print("2. Extract to C:\\ffmpeg")
+            print("3. Add C:\\ffmpeg\\bin to your system PATH")
+            print("4. Restart your command prompt")
+            print(f"\n{Fore.CYAN}Or use chocolatey:{Style.RESET_ALL}")
+            print("  choco install ffmpeg")
+            return False
+        return True
         
     def search_youtube(self, query):
         """Search YouTube for videos"""
@@ -61,7 +127,14 @@ class U2BPlayer:
         try:
             ydl_opts = {
                 'quiet': True,
-                'no_warnings': True
+                'no_warnings': True,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                },
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -76,11 +149,18 @@ class U2BPlayer:
         try:
             # Get video info first
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best' if audio_only else 'best[height<=720]/best',
+                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]/best' if audio_only else 'best[height<=720]/best[height<=480]/best',
                 'quiet': True,
                 'no_warnings': True,
                 'extractaudio': False,
                 'outtmpl': '-',
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                },
             }
             
             # Get video info
@@ -212,19 +292,27 @@ class U2BPlayer:
     def _play_track(self, video_info):
         """Internal method to play a track"""
         try:
+            # Check if ffplay is available
+            if not self._check_ffplay():
+                return
+            
             print(f"{Fore.GREEN}Now playing: {video_info.get('title', 'Unknown')}{Style.RESET_ALL}")
             print(f"{Fore.CYAN}Duration: {video_info.get('duration', 'Unknown')} seconds{Style.RESET_ALL}")
             
             # Configure yt-dlp options for streaming
             ydl_opts = {
-                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio/best[acodec!=none]',
+                'format': 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio[ext=webm]/bestaudio/best[acodec!=none]/best',
                 'quiet': True,
                 'no_warnings': True,
                 'extractaudio': False,
                 'outtmpl': '-',
                 'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                },
             }
             
             # Get the direct URL
@@ -243,8 +331,9 @@ class U2BPlayer:
                 return
             
             # Use ffplay with better stream handling
+            ffplay_exe = self.ffplay_path if self.ffplay_path else 'ffplay'
             cmd = [
-                'ffplay',
+                ffplay_exe,
                 '-nodisp',
                 '-autoexit',
                 '-hide_banner',
